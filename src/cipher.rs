@@ -210,3 +210,42 @@ fn morse_map() -> &'static [(char, &'static str)] {
         ('7', "--..."), ('8', "---.."), ('9', "----."), (' ', "/"),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CipherPipeline;
+    use crate::models::TechniqueDescriptor;
+
+    #[test]
+    fn cipher_pipeline_round_trip() {
+        let pipeline = CipherPipeline;
+        let techniques = vec![
+            TechniqueDescriptor::Caesar { shift: 4 },
+            TechniqueDescriptor::Reverse,
+            TechniqueDescriptor::Vigenere {
+                keyword: "smile".to_string(),
+            },
+            TechniqueDescriptor::RailFence { rails: 3 },
+        ];
+
+        let encoded = pipeline.encode("Secret Message", &techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, &techniques).unwrap();
+
+        assert_eq!(decoded, "Secret Message");
+    }
+
+    #[test]
+    fn morse_round_trip() {
+        let pipeline = CipherPipeline;
+
+        let encoded = pipeline
+            .encode("sos 2", &[TechniqueDescriptor::Morse])
+            .unwrap();
+        let decoded = pipeline
+            .decode(&encoded, &[TechniqueDescriptor::Morse])
+            .unwrap();
+
+        assert_eq!(encoded, "... --- ... / ..---");
+        assert_eq!(decoded, "sos 2");
+    }
+}

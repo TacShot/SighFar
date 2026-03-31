@@ -2,7 +2,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rand::{Rng, rng};
@@ -21,12 +21,13 @@ impl SecureEnvelope {
 
     pub fn seal(&self, message: &str, key_pair: &SecureKeyPair) -> Result<String> {
         let key = derive_key(key_pair)?;
-        let cipher = Aes256Gcm::new_from_slice(&key).context("invalid AES key length")?;
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|_| anyhow!("invalid AES key length"))?;
         let nonce_bytes = random_nonce();
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext = cipher
             .encrypt(nonce, message.as_bytes())
-            .context("failed to encrypt payload")?;
+            .map_err(|_| anyhow!("failed to encrypt payload"))?;
 
         let mut payload = nonce_bytes.to_vec();
         payload.extend(ciphertext);
@@ -43,10 +44,11 @@ impl SecureEnvelope {
 
         let (nonce_bytes, ciphertext) = decoded.split_at(12);
         let key = derive_key(key_pair)?;
-        let cipher = Aes256Gcm::new_from_slice(&key).context("invalid AES key length")?;
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|_| anyhow!("invalid AES key length"))?;
         let plaintext = cipher
             .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
-            .context("failed to decrypt payload with the provided keys")?;
+            .map_err(|_| anyhow!("failed to decrypt payload with the provided keys"))?;
 
         String::from_utf8(plaintext).context("decrypted payload is not valid UTF-8")
     }
@@ -57,7 +59,7 @@ pub fn derive_key(key_pair: &SecureKeyPair) -> Result<[u8; 32]> {
     let salt = normalized_salt(&key_pair.companion_code);
     Argon2::default()
         .hash_password_into(key_pair.passphrase.as_bytes(), &salt, &mut key)
-        .context("failed to derive secure key")?;
+        .map_err(|err| anyhow!("failed to derive secure key: {err}"))?;
     Ok(key)
 }
 
@@ -85,4 +87,24 @@ fn random_code(length: usize) -> String {
             ALPHABET[idx] as char
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SecureEnvelope;
+    use crate::models::SecureKeyPair;
+
+    #[test]
+    fn secure_envelope_round_trip() {
+        let envelope = SecureEnvelope;
+        let pair = SecureKeyPair {
+            passphrase: "alpha".to_string(),
+            companion_code: "BRAVO987".to_string(),
+        };
+
+        let payload = envelope.seal("cipher-stack-output", &pair).unwrap();
+        let opened = envelope.open(&payload, &pair).unwrap();
+
+        assert_eq!(opened, "cipher-stack-output");
+    }
 }

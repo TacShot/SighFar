@@ -7,7 +7,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use rand::{Rng, rng};
 
 use crate::models::HistoryEntry;
@@ -51,10 +51,11 @@ impl HistoryStore {
         }
 
         let (nonce_bytes, ciphertext) = payload.split_at(12);
-        let cipher = Aes256Gcm::new_from_slice(&self.history_key()?).context("invalid AES key")?;
+        let cipher = Aes256Gcm::new_from_slice(&self.history_key()?)
+            .map_err(|_| anyhow!("invalid AES key"))?;
         let plaintext = cipher
             .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
-            .context("failed to decrypt history file")?;
+            .map_err(|_| anyhow!("failed to decrypt history file"))?;
 
         serde_json::from_slice(&plaintext).context("failed to parse history JSON")
     }
@@ -71,11 +72,12 @@ impl HistoryStore {
     fn save(&self, entries: &[HistoryEntry]) -> Result<()> {
         self.ensure_root()?;
         let plaintext = serde_json::to_vec_pretty(entries).context("failed to encode history")?;
-        let cipher = Aes256Gcm::new_from_slice(&self.history_key()?).context("invalid AES key")?;
+        let cipher = Aes256Gcm::new_from_slice(&self.history_key()?)
+            .map_err(|_| anyhow!("invalid AES key"))?;
         let nonce = random_nonce();
         let ciphertext = cipher
             .encrypt(Nonce::from_slice(&nonce), plaintext.as_ref())
-            .context("failed to encrypt history")?;
+            .map_err(|_| anyhow!("failed to encrypt history"))?;
 
         let mut payload = nonce.to_vec();
         payload.extend(ciphertext);
@@ -116,4 +118,48 @@ fn random_nonce() -> [u8; 12] {
     let mut nonce = [0u8; 12];
     rng().fill(&mut nonce);
     nonce
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use chrono::{TimeZone, Utc};
+
+    use super::HistoryStore;
+    use crate::models::{HistoryEntry, OperationKind, TechniqueDescriptor};
+
+    #[test]
+    fn history_store_persists_entries() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sighfar-test-{unique}"));
+        let store = HistoryStore {
+            key_file: root.join("history.key"),
+            history_file: root.join("history.enc"),
+            root,
+        };
+
+        let entry = HistoryEntry {
+            id: "entry-1".to_string(),
+            timestamp: Utc.timestamp_opt(12_345, 0).unwrap(),
+            operation: OperationKind::Encode,
+            input_preview: "hello".to_string(),
+            output_preview: "uryyb".to_string(),
+            techniques: vec![TechniqueDescriptor::Caesar { shift: 13 }],
+            used_secure_envelope: false,
+        };
+
+        store.append(entry).unwrap();
+        let items = store.load().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].input_preview, "hello");
+        assert!(matches!(
+            items[0].techniques.as_slice(),
+            [TechniqueDescriptor::Caesar { shift: 13 }]
+        ));
+    }
 }
