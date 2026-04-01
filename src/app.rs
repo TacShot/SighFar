@@ -1,28 +1,17 @@
-use anyhow::{Result, anyhow, bail};
-use chrono::Utc;
+use anyhow::Result;
 
-use crate::{
-    cipher::CipherPipeline,
-    history::HistoryStore,
-    models::{EncodedMessage, HistoryEntry, OperationKind, SecureKeyPair, TechniqueDescriptor},
-    secure::SecureEnvelope,
-    ui::TerminalUi,
-};
+use crate::{core::SighFarCore, models::TechniqueDescriptor, ui::TerminalUi};
 
 pub struct SighFarApp {
     ui: TerminalUi,
-    pipeline: CipherPipeline,
-    secure_envelope: SecureEnvelope,
-    history_store: HistoryStore,
+    core: SighFarCore,
 }
 
 impl Default for SighFarApp {
     fn default() -> Self {
         Self {
             ui: TerminalUi,
-            pipeline: CipherPipeline,
-            secure_envelope: SecureEnvelope,
-            history_store: HistoryStore::default(),
+            core: SighFarCore::default(),
         }
     }
 }
@@ -58,29 +47,14 @@ impl SighFarApp {
         let message = self.ui.prompt("Message:")?;
         let chain = self.ui.prompt("Technique chain:")?;
         let secure = self.ui.prompt("Wrap in secure paired-key envelope? (y/N):")?;
-        let techniques = parse_techniques(&chain)?;
-        let transformed = self.pipeline.encode(&message, &techniques)?;
-
-        let mut key_pair = None;
-        let mut secure_payload = None;
-        if secure.to_lowercase().starts_with('y') {
-            let passphrase = self.ui.prompt("Primary passphrase:")?;
-            let generated = self.secure_envelope.make_key_pair(&passphrase);
-            secure_payload = Some(self.secure_envelope.seal(&transformed, &generated)?);
-            key_pair = Some(generated);
-        }
-
-        let result = EncodedMessage {
-            original_input: message,
-            transformed_text: transformed,
-            secure_payload,
-            techniques,
-            used_secure_envelope: key_pair.is_some(),
-            key_pair,
+        let passphrase = if secure.to_lowercase().starts_with('y') {
+            Some(self.ui.prompt("Primary passphrase:")?)
+        } else {
+            None
         };
-
-        self.history_store
-            .append(history_entry_for(&result, OperationKind::Encode))?;
+        let result = self
+            .core
+            .encode(&message, &chain, secure.to_lowercase().starts_with('y'), passphrase.as_deref())?;
         self.show_encode_result(&result)?;
         Ok(())
     }
@@ -93,43 +67,37 @@ impl SighFarApp {
         );
 
         let secure_wrapped = self.ui.prompt("Is this a secure payload? (y/N):")?;
-        let raw_input = if secure_wrapped.to_lowercase().starts_with('y') {
-            let payload = self.ui.prompt("Secure payload:")?;
-            let passphrase = self.ui.prompt("Primary passphrase:")?;
-            let companion_code = self.ui.prompt("Companion code:")?;
-            self.secure_envelope.open(
-                &payload,
-                &SecureKeyPair {
-                    passphrase,
-                    companion_code,
-                },
-            )?
+        let input = if secure_wrapped.to_lowercase().starts_with('y') {
+            self.ui.prompt("Secure payload:")?
         } else {
             self.ui.prompt("Cipher text:")?
         };
-
-        let techniques = parse_techniques(&self.ui.prompt("Technique chain:")?)?;
-        let decoded = self.pipeline.decode(&raw_input, &techniques)?;
-
-        let result = EncodedMessage {
-            original_input: raw_input,
-            transformed_text: decoded.clone(),
-            secure_payload: None,
-            techniques,
-            used_secure_envelope: secure_wrapped.to_lowercase().starts_with('y'),
-            key_pair: None,
+        let passphrase = if secure_wrapped.to_lowercase().starts_with('y') {
+            Some(self.ui.prompt("Primary passphrase:")?)
+        } else {
+            None
         };
-
-        self.history_store
-            .append(history_entry_for(&result, OperationKind::Decode))?;
-        self.ui.print_panel("Decoded", &decoded);
+        let companion_code = if secure_wrapped.to_lowercase().starts_with('y') {
+            Some(self.ui.prompt("Companion code:")?)
+        } else {
+            None
+        };
+        let chain = self.ui.prompt("Technique chain:")?;
+        let result = self.core.decode(
+            &input,
+            &chain,
+            secure_wrapped.to_lowercase().starts_with('y'),
+            passphrase.as_deref(),
+            companion_code.as_deref(),
+        )?;
+        self.ui.print_panel("Decoded", &result.transformed_text);
         self.ui.pause()?;
         Ok(())
     }
 
     fn show_history(&self) -> Result<()> {
         self.ui.clear_screen();
-        let entries = self.history_store.load()?;
+        let entries = self.core.load_history()?;
         if entries.is_empty() {
             self.ui
                 .print_panel("History", "No entries yet. Encode or decode a message first.");
@@ -170,7 +138,7 @@ impl SighFarApp {
             "Settings",
             &format!(
                 "github oauth: planned\nupdate channel: planned\nfile hiding / carrier mode: planned\n\nlocal encrypted history:\n{}\n\nnote:\nthis rust branch is aimed at future cross-platform parity. the next production step is moving local secrets into os key stores per platform.",
-                self.history_store.diagnostics()
+                self.core.diagnostics()
             ),
         );
         self.ui.pause()?;
@@ -187,7 +155,7 @@ impl SighFarApp {
         Ok(())
     }
 
-    fn show_encode_result(&self, result: &EncodedMessage) -> Result<()> {
+    fn show_encode_result(&self, result: &crate::models::EncodedMessage) -> Result<()> {
         let mut lines = vec![
             "Transformed text:".to_string(),
             result.transformed_text.clone(),
@@ -206,77 +174,5 @@ impl SighFarApp {
         self.ui.print_panel("Encoded", &lines.join("\n"));
         self.ui.pause()?;
         Ok(())
-    }
-}
-
-fn parse_techniques(input: &str) -> Result<Vec<TechniqueDescriptor>> {
-    let items: Vec<_> = input
-        .split(',')
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .collect();
-
-    if items.is_empty() {
-        bail!("You need at least one technique.");
-    }
-
-    items
-        .into_iter()
-        .map(|item| {
-            if item == "morse" {
-                return Ok(TechniqueDescriptor::Morse);
-            }
-            if item == "reverse" {
-                return Ok(TechniqueDescriptor::Reverse);
-            }
-            if let Some(shift) = item.strip_prefix("caesar:") {
-                return Ok(TechniqueDescriptor::Caesar {
-                    shift: shift.parse().map_err(|_| anyhow!("Caesar format is caesar:3"))?,
-                });
-            }
-            if let Some(keyword) = item.strip_prefix("vigenere:") {
-                if keyword.is_empty() {
-                    bail!("Vigenere format is vigenere:keyword");
-                }
-                return Ok(TechniqueDescriptor::Vigenere {
-                    keyword: keyword.to_string(),
-                });
-            }
-            if let Some(rails) = item.strip_prefix("railfence:") {
-                return Ok(TechniqueDescriptor::RailFence {
-                    rails: rails
-                        .parse()
-                        .map_err(|_| anyhow!("RailFence format is railfence:3"))?,
-                });
-            }
-
-            bail!("Unknown technique: {item}")
-        })
-        .collect()
-}
-
-fn history_entry_for(result: &EncodedMessage, operation: OperationKind) -> HistoryEntry {
-    HistoryEntry {
-        id: format!("entry-{}", Utc::now().timestamp_millis()),
-        timestamp: Utc::now(),
-        operation,
-        input_preview: truncate(&result.original_input),
-        output_preview: truncate(
-            result
-                .secure_payload
-                .as_deref()
-                .unwrap_or(&result.transformed_text),
-        ),
-        techniques: result.techniques.clone(),
-        used_secure_envelope: result.used_secure_envelope,
-    }
-}
-
-fn truncate(value: &str) -> String {
-    let cleaned = value.replace('\n', " ");
-    if cleaned.chars().count() > 80 {
-        format!("{}...", cleaned.chars().take(77).collect::<String>())
-    } else {
-        cleaned
     }
 }

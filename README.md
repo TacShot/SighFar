@@ -2,7 +2,7 @@
 
 SighFar is an offline cipher workbench prototype for layered message obfuscation, paired-key recovery, and encrypted local history.
 
-This branch, `codex/rust-pivot`, moves the project toward a Rust-first implementation because that is the stronger path to a real cross-platform release across macOS, Linux, Windows, Android, and potentially FreeBSD. The interface is still a retro terminal shell for now, with the SmileOS-inspired GUI remaining the next visual milestone.
+This branch, `codex/rust-pivot`, moves the project toward a Rust-first implementation because that is the stronger path to a real cross-platform release across macOS, Linux, Windows, Android, and potentially FreeBSD. It now includes a first desktop GUI shell in `egui`, while still keeping the terminal mode available as a fallback.
 
 ## What this branch does
 
@@ -10,7 +10,8 @@ This branch, `codex/rust-pivot`, moves the project toward a Rust-first implement
 - Supports Morse, Caesar, Vigenere, Rail Fence, and Reverse transforms
 - Wraps transformed output in an optional paired-key secure envelope
 - Stores an encrypted history log locally so it is only readable through the app workflow
-- Establishes a Rust crate layout that can later grow into an egui-based GUI
+- Adds a SmileOS-inspired desktop shell for encode, decode, history, settings, and roadmap views
+- Keeps a `--tui` fallback if you want the terminal flow
 
 ## Important security note
 
@@ -29,24 +30,35 @@ For a production-grade release, the next step is moving secrets into OS-backed s
 cargo run
 ```
 
+Terminal fallback:
+
+```bash
+cargo run -- --tui
+```
+
 ## Verification
 
-- this branch is not compiled in the current workspace because `cargo` and `rustc` are not installed here
-- the source tree is structured as a real Rust crate and is ready for build verification on a machine with Rust installed
-- `main` still contains the previously verified Swift prototype if you need a runnable local baseline today
+- `cargo build` succeeds
+- `cargo test` passes with 4 unit tests
+- the desktop GUI launches with `cargo run`
+- `main` still contains the earlier Swift prototype if you want to compare directions
 
 ## Current Rust architecture
 
 - `src/app.rs`
-  Interactive flows and menu handling.
+  Terminal fallback flow.
+- `src/core.rs`
+  Shared workflow logic used by both the GUI and terminal modes.
 - `src/cipher.rs`
   Cipher chaining and encode/decode implementations.
+- `src/gui.rs`
+  `egui` desktop shell with the SmileOS-inspired layout.
 - `src/secure.rs`
   AES-GCM secure envelope with Argon2-based key derivation from split key material.
 - `src/history.rs`
   Encrypted history persistence in `~/.sighfar`.
 - `src/ui.rs`
-  Retro ANSI terminal shell.
+  Retro ANSI terminal shell used by `--tui`.
 
 ## Product direction from your idea
 
