@@ -1,7 +1,10 @@
 mod app;
+mod carrier;
 mod cipher;
+mod config;
 mod core;
 mod gui;
+mod github_sync;
 mod history;
 mod models;
 mod secure;

@@ -11,6 +11,8 @@ This branch, `codex/rust-pivot`, moves the project toward a Rust-first implement
 - Wraps transformed output in an optional paired-key secure envelope
 - Stores an encrypted history log locally so it is only readable through the app workflow
 - Adds a SmileOS-inspired desktop shell for encode, decode, history, settings, and roadmap views
+- Includes carrier-file mode for hiding one file inside another using an extractable trailer
+- Includes GitHub device-flow sign-in so the app can create a private sync repository and push or pull the encrypted history blob
 - Keeps a `--tui` fallback if you want the terminal flow
 
 ## Important security note
@@ -39,7 +41,7 @@ cargo run -- --tui
 ## Verification
 
 - `cargo build` succeeds
-- `cargo test` passes with 4 unit tests
+- `cargo test` passes with 5 unit tests
 - the desktop GUI launches with `cargo run`
 - `main` still contains the earlier Swift prototype if you want to compare directions
 
@@ -51,8 +53,14 @@ cargo run -- --tui
   Shared workflow logic used by both the GUI and terminal modes.
 - `src/cipher.rs`
   Cipher chaining and encode/decode implementations.
+- `src/carrier.rs`
+  Carrier container format for embedding and extracting one file inside another.
+- `src/config.rs`
+  Lightweight local config for saved GitHub sync settings.
 - `src/gui.rs`
-  `egui` desktop shell with the SmileOS-inspired layout.
+  `egui` desktop shell with the SmileOS-inspired layout, dropdown cipher chain builder, carrier UI, and GitHub sync settings.
+- `src/github_sync.rs`
+  GitHub device-flow sign-in, private repo creation, and encrypted history push/pull helpers.
 - `src/secure.rs`
   AES-GCM secure envelope with Argon2-based key derivation from split key material.
 - `src/history.rs`
@@ -83,7 +91,7 @@ Production upgrade path:
 
 ### 3. GUI direction
 
-The desired aesthetic is a retro industrial console similar to SmileOS from Ultrakill:
+The desired aesthetic is a retro industrial console similar to SmileOS:
 
 - heavy red title bars
 - dark panel bodies
@@ -97,16 +105,16 @@ Recommended GUI branch after the workflow is stable:
 
 ### 4. File hiding mode
 
-This is not implemented yet, but there are two viable paths:
+This now has an initial carrier-container implementation:
 
-- Carrier container mode: append encrypted payload bytes plus metadata marker to another file
+- Carrier container mode: append payload bytes plus metadata trailer to another file and extract them later
 - Real steganography mode: hide bits inside image or audio structures
 
-The first is much easier to ship reliably. The second is more covert but much more format-specific.
+The current implementation is the first path because it is much easier to ship reliably. Real steganography is still a future enhancement.
 
 ### 5. GitHub OAuth
 
-Not implemented in this branch. The settings module still includes a placeholder because this should remain optional and not compromise offline-first usage.
+This branch now includes a first pass at GitHub sync through the OAuth device flow. The user provides a GitHub OAuth app client ID in Settings, signs in, and the app can create a private repository automatically if it does not exist yet.
 
 Use OAuth only for:
 
@@ -114,7 +122,7 @@ Use OAuth only for:
 - release channel access
 - backup or export workflows
 
-Keep all encode/decode features fully offline.
+The current sync implementation pushes and pulls only the encrypted history blob, not the local key file. Keep all encode/decode features usable offline even when GitHub sync is not configured.
 
 ### 6. Updating instead of duplicate installs
 

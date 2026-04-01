@@ -69,6 +69,19 @@ impl HistoryStore {
         )
     }
 
+    pub fn export_encrypted_blob(&self) -> Result<Vec<u8>> {
+        self.ensure_root()?;
+        if !self.history_file.exists() {
+            return Ok(Vec::new());
+        }
+        fs::read(&self.history_file).context("failed to read encrypted history blob")
+    }
+
+    pub fn import_encrypted_blob(&self, blob: &[u8]) -> Result<()> {
+        self.ensure_root()?;
+        fs::write(&self.history_file, blob).context("failed to write imported encrypted history blob")
+    }
+
     fn save(&self, entries: &[HistoryEntry]) -> Result<()> {
         self.ensure_root()?;
         let plaintext = serde_json::to_vec_pretty(entries).context("failed to encode history")?;

@@ -108,6 +108,14 @@ impl SighFarCore {
     pub fn diagnostics(&self) -> String {
         self.history_store.diagnostics()
     }
+
+    pub fn export_encrypted_history_blob(&self) -> Result<Vec<u8>> {
+        self.history_store.export_encrypted_blob()
+    }
+
+    pub fn import_encrypted_history_blob(&self, blob: &[u8]) -> Result<()> {
+        self.history_store.import_encrypted_blob(blob)
+    }
 }
 
 pub fn parse_techniques(input: &str) -> Result<Vec<TechniqueDescriptor>> {
