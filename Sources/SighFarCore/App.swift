@@ -3,7 +3,8 @@ import Foundation
 package struct SighFarApp {
     /// Maximum message size (bytes) that is processed without warning.
     /// Inputs beyond this threshold prompt the user to confirm before encoding/decoding
-    /// to prevent accidental large payloads from stalling the terminal.
+    /// to prevent accidental large payloads from consuming significant CPU time and
+    /// memory during cipher operations, which could make the terminal appear unresponsive.
     static let messageSizeLimitBytes = 1_048_576 // 1 MB
 
     private let ui = TerminalUI()

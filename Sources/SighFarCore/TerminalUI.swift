@@ -28,8 +28,10 @@ struct TerminalUI {
 
     func prompt(_ text: String) -> String {
         // The C standard guarantees stdout is flushed before stdin is read on
-        // interactive terminals, so an explicit fflush is not required and
-        // avoids Swift 6 strict-concurrency issues with the C global `stdout`.
+        // interactive terminals, so an explicit fflush is not required here.
+        // On non-interactive terminals or when output is redirected (e.g. in
+        // CI), output is captured rather than displayed, so flush ordering is
+        // irrelevant in those scenarios.
         print(text, terminator: " ")
         return readLine() ?? ""
     }
