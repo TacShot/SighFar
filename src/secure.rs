@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn make_key_pair_stores_passphrase_and_generates_code() {
+    fn make_key_pair_generates_valid_code() {
         let envelope = SecureEnvelope;
         let pair = envelope.make_key_pair("my-pass");
         assert_eq!(pair.passphrase, "my-pass");

@@ -375,11 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn reverse_unicode() {
+    fn reverse_unicode_characters() {
         let pipeline = CipherPipeline;
         let techniques = &[TechniqueDescriptor::Reverse];
-        let encoded = pipeline.encode("abc", techniques).unwrap();
-        assert_eq!(encoded, "cba");
+        // Test with actual multi-byte Unicode characters
+        let encoded = pipeline.encode("héllo", techniques).unwrap();
+        assert_eq!(encoded, "olléh");
     }
 
     #[test]
