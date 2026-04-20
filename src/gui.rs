@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use eframe::egui::{
     self, Align, Button, CentralPanel, Color32, ComboBox, Context, CornerRadius, FontData,
@@ -12,7 +12,7 @@ use crate::{
     config::{AppConfig, ConfigStore},
     core::SighFarCore,
     github_sync::{DeviceAuthState, DevicePollStatus, GitHubSession, GitHubSyncClient},
-    models::{EncodedMessage, HistoryEntry, OperationKind, TechniqueDescriptor},
+    models::{EncodedMessage, HistoryEntry, KeyEntry, OperationKind, TechniqueDescriptor},
 };
 
 pub fn launch_gui() -> anyhow::Result<()> {
@@ -52,6 +52,8 @@ enum DraftTechniqueKind {
     Vigenere,
     RailFence,
     Reverse,
+    Sha256,
+    Sha512,
 }
 
 impl DraftTechniqueKind {
@@ -62,11 +64,21 @@ impl DraftTechniqueKind {
             Self::Vigenere => "Vigenere",
             Self::RailFence => "Rail Fence",
             Self::Reverse => "Reverse",
+            Self::Sha256 => "SHA-256",
+            Self::Sha512 => "SHA-512",
         }
     }
 
-    fn all() -> [Self; 5] {
-        [Self::Morse, Self::Caesar, Self::Vigenere, Self::RailFence, Self::Reverse]
+    fn all() -> [Self; 7] {
+        [
+            Self::Morse,
+            Self::Caesar,
+            Self::Vigenere,
+            Self::RailFence,
+            Self::Reverse,
+            Self::Sha256,
+            Self::Sha512,
+        ]
     }
 }
 
@@ -107,6 +119,8 @@ impl TechniqueBuilder {
                 rails: self.draft_rails.max(2),
             },
             DraftTechniqueKind::Reverse => TechniqueDescriptor::Reverse,
+            DraftTechniqueKind::Sha256 => TechniqueDescriptor::Sha256,
+            DraftTechniqueKind::Sha512 => TechniqueDescriptor::Sha512,
         };
         self.items.push(item);
     }
@@ -120,6 +134,8 @@ impl TechniqueBuilder {
                 TechniqueDescriptor::Vigenere { keyword } => format!("vigenere:{keyword}"),
                 TechniqueDescriptor::RailFence { rails } => format!("railfence:{rails}"),
                 TechniqueDescriptor::Reverse => "reverse".to_string(),
+                TechniqueDescriptor::Sha256 => "sha256".to_string(),
+                TechniqueDescriptor::Sha512 => "sha512".to_string(),
             })
             .collect::<Vec<_>>()
             .join(",")
@@ -133,6 +149,11 @@ struct EncodeState {
     passphrase: String,
     result: Option<EncodedMessage>,
     status: String,
+    // RSA encrypt panel
+    rsa_input: String,
+    rsa_key_label: String,
+    rsa_result: String,
+    rsa_status: String,
 }
 
 impl Default for EncodeState {
@@ -144,6 +165,10 @@ impl Default for EncodeState {
             passphrase: String::new(),
             result: None,
             status: "Ready to encode a message.".to_string(),
+            rsa_input: String::new(),
+            rsa_key_label: "primary".to_string(),
+            rsa_result: String::new(),
+            rsa_status: String::new(),
         }
     }
 }
@@ -156,6 +181,11 @@ struct DecodeState {
     companion_code: String,
     result: Option<EncodedMessage>,
     status: String,
+    // RSA decrypt panel
+    rsa_ciphertext: String,
+    rsa_key_label: String,
+    rsa_result: String,
+    rsa_status: String,
 }
 
 impl Default for DecodeState {
@@ -168,6 +198,10 @@ impl Default for DecodeState {
             companion_code: String::new(),
             result: None,
             status: "Ready to decode a message.".to_string(),
+            rsa_ciphertext: String::new(),
+            rsa_key_label: "primary".to_string(),
+            rsa_result: String::new(),
+            rsa_status: String::new(),
         }
     }
 }
@@ -211,6 +245,10 @@ pub struct SmileFarGui {
     settings: SettingsState,
     history: Vec<HistoryEntry>,
     history_status: String,
+    /// Managed RSA key pairs shown in the History/Keys tab.
+    keys: Vec<KeyEntry>,
+    keys_status: String,
+    new_key_label: String,
 }
 
 impl Default for SmileFarGui {
@@ -219,6 +257,7 @@ impl Default for SmileFarGui {
         let config_store = ConfigStore::default();
         let config = config_store.load().unwrap_or_default();
         let history = core.load_history().unwrap_or_default();
+        let keys = core.list_keys().unwrap_or_default();
 
         Self {
             core,
@@ -234,19 +273,26 @@ impl Default for SmileFarGui {
             settings: SettingsState::new(config),
             history,
             history_status: "Encrypted history loaded from local storage.".to_string(),
+            keys,
+            keys_status: String::new(),
+            new_key_label: String::new(),
         }
     }
 }
 
 impl eframe::App for SmileFarGui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Throttle idle repaints to ≈ 10 fps to reduce CPU usage when nothing is happening.
+        // Any user interaction triggers an immediate repaint via egui's built-in mechanism.
+        ctx.request_repaint_after(Duration::from_millis(100));
+
         TopBottomPanel::top("title_bar")
             .exact_height(54.0)
             .frame(panel_frame(Color32::from_rgb(150, 31, 20), 6))
             .show(ctx, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.label(
-                        RichText::new("SMILEFAR OS 2.1")
+                        RichText::new("SIGHFAR")
                             .size(24.0)
                             .monospace()
                             .strong()
@@ -278,7 +324,7 @@ impl eframe::App for SmileFarGui {
                 ui.vertical_centered(|ui| {
                     ui.add_space(14.0);
                     ui.label(
-                        RichText::new("SMILE")
+                        RichText::new("SIGHT")
                             .size(36.0)
                             .monospace()
                             .strong()
@@ -291,12 +337,6 @@ impl eframe::App for SmileFarGui {
                             .strong()
                             .color(Color32::from_rgb(255, 191, 79)),
                     );
-                    ui.label(
-                        RichText::new("RUST DESKTOP BUILD")
-                            .size(13.0)
-                            .monospace()
-                            .color(Color32::from_rgb(225, 214, 206)),
-                    );
                     ui.add_space(18.0);
                 });
 
@@ -304,21 +344,28 @@ impl eframe::App for SmileFarGui {
                     (Tab::Encode, "Encode"),
                     (Tab::Decode, "Decode"),
                     (Tab::Carrier, "Carrier File"),
-                    (Tab::History, "Encrypted History"),
+                    (Tab::History, "History & Keys"),
                     (Tab::Settings, "Settings"),
                 ] {
                     let selected = self.active_tab == tab;
-                    let fill = if selected {
-                        Color32::from_rgb(160, 43, 29)
-                    } else {
-                        Color32::from_rgb(62, 62, 62)
-                    };
-                    let text = if selected {
-                        Color32::from_rgb(255, 248, 244)
-                    } else {
-                        Color32::from_rgb(245, 239, 234)
-                    };
-                    let button = Button::new(RichText::new(label).size(17.0).monospace().strong().color(text))
+                    // Animate the fill colour: smoothly transition between selected and
+                    // unselected states using egui's built-in value animation.
+                    let t = ctx.animate_bool_with_time(
+                        egui::Id::new(format!("tab_sel_{label}")),
+                        selected,
+                        0.18,
+                    );
+                    let fill = lerp_color(
+                        Color32::from_rgb(62, 62, 62),
+                        Color32::from_rgb(160, 43, 29),
+                        t,
+                    );
+                    let text_col = lerp_color(
+                        Color32::from_rgb(245, 239, 234),
+                        Color32::from_rgb(255, 248, 244),
+                        t,
+                    );
+                    let button = Button::new(RichText::new(label).size(17.0).monospace().strong().color(text_col))
                         .min_size(Vec2::new(226.0, 44.0))
                         .fill(fill)
                         .stroke(Stroke::new(2.0, Color32::from_rgb(209, 126, 98)))
@@ -348,12 +395,12 @@ impl SmileFarGui {
         panel_title(ui, "Encode Console");
         framed_body(ui, |ui| {
             ui.label(
-                RichText::new("Build your cipher chain from the dropdown, then split the keys if you wrap the result.")
-                    .size(20.0)
+                RichText::new("Build your cipher chain, then optionally wrap the result in a secure paired-key envelope.")
+                    .size(18.0)
                     .monospace()
                     .color(primary_text()),
             );
-            ui.add_space(20.0);
+            ui.add_space(16.0);
             ui.label(section_label("MESSAGE"));
             ui.add(TextEdit::multiline(&mut self.encode.message).desired_rows(6).hint_text("Enter plaintext to transform"));
             ui.add_space(18.0);
@@ -361,7 +408,7 @@ impl SmileFarGui {
             ui.add_space(14.0);
             ui.checkbox(
                 &mut self.encode.secure,
-                RichText::new("WRAP OUTPUT IN SECURE PAIRED-KEY ENVELOPE")
+                RichText::new("WRAP OUTPUT IN SECURE PAIRED-KEY ENVELOPE (AES-256-GCM + ARGON2)")
                     .monospace()
                     .color(primary_text()),
             );
@@ -409,6 +456,39 @@ impl SmileFarGui {
                     });
                 }
             }
+
+            // ── RSA Encrypt section ────────────────────────────────────────
+            ui.add_space(16.0);
+            ui.separator();
+            ui.label(RichText::new("RSA ENCRYPT").size(18.0).monospace().strong().color(Color32::from_rgb(255, 213, 135)));
+            ui.label(RichText::new("Encrypt a message with an RSA-2048 public key from your key store. Use the History & Keys tab to manage keys.").color(secondary_text()));
+            ui.add_space(8.0);
+            ui.label(section_label("PLAINTEXT"));
+            ui.add(TextEdit::multiline(&mut self.encode.rsa_input).desired_rows(3).hint_text("Message to RSA-encrypt"));
+            ui.add_space(6.0);
+            ui.label(section_label("KEY LABEL"));
+            ui.add(TextEdit::singleline(&mut self.encode.rsa_key_label).hint_text("primary"));
+            ui.add_space(8.0);
+            if ui.add(accent_button("RSA Encrypt")).clicked() {
+                let label = self.encode.rsa_key_label.trim().to_string();
+                match self.core.rsa_encrypt(&self.encode.rsa_input, &label) {
+                    Ok(ct) => {
+                        self.encode.rsa_result = ct;
+                        self.encode.rsa_status = format!("Encrypted with key '{label}'.");
+                    }
+                    Err(err) => {
+                        self.encode.rsa_status = err.to_string();
+                        self.encode.rsa_result.clear();
+                    }
+                }
+            }
+            if !self.encode.rsa_status.is_empty() {
+                status_line(ui, &self.encode.rsa_status);
+            }
+            if !self.encode.rsa_result.is_empty() {
+                ui.label(section_label("RSA CIPHERTEXT (base64)"));
+                output_box(ui, &self.encode.rsa_result.clone());
+            }
         });
     }
 
@@ -417,11 +497,11 @@ impl SmileFarGui {
         framed_body(ui, |ui| {
             ui.label(
                 RichText::new("Rebuild the original chain, then provide both key parts if the input is securely wrapped.")
-                    .size(20.0)
+                    .size(18.0)
                     .monospace()
                     .color(primary_text()),
             );
-            ui.add_space(20.0);
+            ui.add_space(16.0);
             ui.checkbox(
                 &mut self.decode.secure,
                 RichText::new("INPUT IS A SECURE PAYLOAD")
@@ -466,6 +546,39 @@ impl SmileFarGui {
                 ui.separator();
                 ui.label(section_label("DECODED TEXT"));
                 output_box(ui, &result.transformed_text);
+            }
+
+            // ── RSA Decrypt section ────────────────────────────────────────
+            ui.add_space(16.0);
+            ui.separator();
+            ui.label(RichText::new("RSA DECRYPT").size(18.0).monospace().strong().color(Color32::from_rgb(255, 213, 135)));
+            ui.label(RichText::new("Decrypt an RSA-encrypted message using the private key from your key store.").color(secondary_text()));
+            ui.add_space(8.0);
+            ui.label(section_label("RSA CIPHERTEXT (base64)"));
+            ui.add(TextEdit::multiline(&mut self.decode.rsa_ciphertext).desired_rows(3));
+            ui.add_space(6.0);
+            ui.label(section_label("KEY LABEL"));
+            ui.add(TextEdit::singleline(&mut self.decode.rsa_key_label).hint_text("primary"));
+            ui.add_space(8.0);
+            if ui.add(accent_button("RSA Decrypt")).clicked() {
+                let label = self.decode.rsa_key_label.trim().to_string();
+                match self.core.rsa_decrypt(&self.decode.rsa_ciphertext, &label) {
+                    Ok(pt) => {
+                        self.decode.rsa_result = pt;
+                        self.decode.rsa_status = format!("Decrypted with key '{label}'.");
+                    }
+                    Err(err) => {
+                        self.decode.rsa_status = err.to_string();
+                        self.decode.rsa_result.clear();
+                    }
+                }
+            }
+            if !self.decode.rsa_status.is_empty() {
+                status_line(ui, &self.decode.rsa_status);
+            }
+            if !self.decode.rsa_result.is_empty() {
+                ui.label(section_label("DECRYPTED TEXT"));
+                output_box(ui, &self.decode.rsa_result.clone());
             }
         });
     }
@@ -543,11 +656,87 @@ impl SmileFarGui {
     }
 
     fn render_history(&mut self, ui: &mut Ui) {
-        panel_title(ui, "Encrypted History");
+        panel_title(ui, "History & Keys");
         framed_body(ui, |ui| {
+            // ── Key Management ─────────────────────────────────────────────
+            ui.label(RichText::new("RSA KEY MANAGEMENT").size(18.0).monospace().strong().color(Color32::from_rgb(255, 213, 135)));
+            ui.label(RichText::new("Auto-generated RSA-2048 key pairs stored in the encrypted local key database. Keys are identified by a short label.").size(15.0).color(secondary_text()));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add(TextEdit::singleline(&mut self.new_key_label).desired_width(180.0).hint_text("label (e.g. work)"));
+                if ui.add(accent_button("Generate Key")).clicked() {
+                    let label = self.new_key_label.trim().to_string();
+                    let label = if label.is_empty() { "primary".to_string() } else { label };
+                    match self.core.generate_key(&label) {
+                        Ok(_) => {
+                            self.keys_status = format!("Generated RSA key '{label}'.");
+                            self.new_key_label.clear();
+                            self.refresh_keys();
+                        }
+                        Err(err) => self.keys_status = err.to_string(),
+                    }
+                }
+                if ui.add(accent_button("Ensure Primary")).clicked() {
+                    match self.core.ensure_primary_key() {
+                        Ok(k) => {
+                            self.keys_status = format!("Primary key ready. Fingerprint: {}", k.fingerprint);
+                            self.refresh_keys();
+                        }
+                        Err(err) => self.keys_status = err.to_string(),
+                    }
+                }
+                if ui.add(secondary_button("Refresh")).clicked() {
+                    self.refresh_keys();
+                }
+            });
+            if !self.keys_status.is_empty() {
+                status_line(ui, &self.keys_status);
+            }
+            ui.add_space(6.0);
+
+            let keys_snapshot = self.keys.clone();
+            let mut delete_label: Option<String> = None;
+            for entry in &keys_snapshot {
+                Frame::new()
+                    .fill(Color32::from_rgb(24, 22, 28))
+                    .stroke(Stroke::new(1.5, Color32::from_rgb(130, 80, 155)))
+                    .corner_radius(3.0)
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&entry.label).monospace().strong().color(Color32::from_rgb(255, 213, 135)));
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(&entry.fingerprint).size(13.0).monospace().color(secondary_text()));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.add(secondary_button("DELETE")).clicked() {
+                                    delete_label = Some(entry.label.clone());
+                                }
+                            });
+                        });
+                        ui.label(RichText::new(format!("created: {}", entry.created_at.format("%Y-%m-%d %H:%M UTC"))).size(13.0).color(secondary_text()));
+                    });
+                ui.add_space(6.0);
+            }
+            if let Some(label) = delete_label {
+                match self.core.delete_key(&label) {
+                    Ok(_) => {
+                        self.keys_status = format!("Deleted key '{label}'.");
+                        self.refresh_keys();
+                    }
+                    Err(err) => self.keys_status = err.to_string(),
+                }
+            }
+            if self.keys.is_empty() {
+                ui.add(Label::new(RichText::new("No keys yet. Click 'Ensure Primary' to auto-generate one.").color(secondary_text())));
+            }
+
+            ui.add_space(14.0);
+            ui.separator();
+
+            // ── History log ────────────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.label(RichText::new("ENCRYPTED EVENT LOG").size(18.0).monospace().strong());
-                if ui.add(accent_button("Refresh")).clicked() {
+                if ui.add(secondary_button("Refresh")).clicked() {
                     self.refresh_history();
                 }
             });
@@ -573,40 +762,45 @@ impl SmileFarGui {
                                         .color(Color32::from_rgb(255, 194, 92)),
                                 );
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(entry.timestamp.to_rfc3339()).color(secondary_text()));
+                                let ts = entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+                                ui.label(RichText::new(ts).size(14.0).color(secondary_text()));
                             });
-                            ui.label(RichText::new(format!("in: {}", entry.input_preview)).color(primary_text()));
-                            ui.label(RichText::new(format!("out: {}", entry.output_preview)).color(primary_text()));
+                            ui.label(RichText::new(format!("in:  {}", entry.input_preview)).size(14.0).monospace().color(primary_text()));
+                            ui.label(RichText::new(format!("out: {}", entry.output_preview)).size(14.0).monospace().color(primary_text()));
                             ui.label(
                                 RichText::new(format!(
                                     "chain: {}",
-                                    entry.techniques.iter().map(|item| item.title()).collect::<Vec<_>>().join(" -> ")
+                                    entry.techniques.iter().map(|item| item.title()).collect::<Vec<_>>().join(" → ")
                                 ))
+                                .size(14.0)
                                 .color(primary_text()),
                             );
-                            ui.label(
-                                RichText::new(format!("secure: {}", if entry.used_secure_envelope { "yes" } else { "no" }))
-                                    .color(primary_text()),
-                            );
+                            if entry.used_secure_envelope {
+                                ui.label(RichText::new("secure envelope: yes").size(14.0).color(Color32::from_rgb(180, 230, 140)));
+                            }
                         });
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
                 }
                 if self.history.is_empty() {
-                    ui.add(Label::new(RichText::new("No encrypted history yet. Use Encode or Decode first.").color(primary_text())));
+                    ui.add(Label::new(RichText::new("No history yet. Encode or Decode a message first.").color(secondary_text())));
                 }
             });
         });
     }
 
     fn render_settings(&mut self, ui: &mut Ui) {
-        panel_title(ui, "System Settings");
+        panel_title(ui, "Settings");
         framed_body(ui, |ui| {
             ui.label(RichText::new("GITHUB SYNC").size(18.0).monospace().strong().color(primary_text()));
             ui.add_space(12.0);
             ui.label(
-                RichText::new("USE A GITHUB OAUTH APP CLIENT ID WITH DEVICE FLOW ENABLED. THE APP CAN CREATE A PRIVATE SYNC REPOSITORY AND STORE ONLY THE ENCRYPTED HISTORY BLOB THERE.")
-                    .monospace()
-                    .color(primary_text()),
+                RichText::new(
+                    "Use a GitHub OAuth app client ID with device flow enabled. \
+                     The app creates a private repository and stores only the \
+                     encrypted history blob there — never the local key file.",
+                )
+                .monospace()
+                .color(primary_text()),
             );
             ui.add_space(16.0);
             ui.label(section_label("GITHUB OAUTH CLIENT ID"));
@@ -677,11 +871,6 @@ impl SmileFarGui {
             ui.separator();
             ui.label(section_label("LOCAL ENCRYPTED HISTORY"));
             output_box(ui, &self.core.diagnostics());
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new("The sync repository stores only the encrypted history blob, not the local key file. Another device still needs the key material to decrypt the synced history.")
-                    .color(secondary_text()),
-            );
         });
     }
 
@@ -694,6 +883,13 @@ impl SmileFarGui {
             Err(err) => {
                 self.history_status = err.to_string();
             }
+        }
+    }
+
+    fn refresh_keys(&mut self) {
+        match self.core.list_keys() {
+            Ok(keys) => self.keys = keys,
+            Err(err) => self.keys_status = err.to_string(),
         }
     }
 
@@ -765,21 +961,34 @@ impl SmileFarGui {
 
 fn configure_fonts(ctx: &Context) {
     let mut fonts = FontDefinitions::default();
-    if let Ok(bytes) = fs::read("/System/Library/Fonts/Monaco.ttf") {
-        fonts.font_data.insert(
-            "monaco".to_string(),
-            FontData::from_owned(bytes).into(),
-        );
-        fonts
-            .families
-            .entry(FontFamily::Monospace)
-            .or_default()
-            .insert(0, "monaco".to_string());
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, "monaco".to_string());
+
+    // Try platform-specific monospace fonts in priority order.
+    let candidates: &[&str] = &[
+        "/System/Library/Fonts/Monaco.ttf",                   // macOS
+        "/System/Library/Fonts/Supplemental/Courier New.ttf", // macOS fallback
+        "C:\\Windows\\Fonts\\consola.ttf",                    // Windows Consolas
+        "C:\\Windows\\Fonts\\cour.ttf",                       // Windows Courier New
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",// Linux
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",            // Arch
+    ];
+    for path in candidates {
+        if let Ok(bytes) = fs::read(path) {
+            fonts.font_data.insert(
+                "monospace_override".to_string(),
+                FontData::from_owned(bytes).into(),
+            );
+            fonts
+                .families
+                .entry(FontFamily::Monospace)
+                .or_default()
+                .insert(0, "monospace_override".to_string());
+            fonts
+                .families
+                .entry(FontFamily::Proportional)
+                .or_default()
+                .insert(0, "monospace_override".to_string());
+            break;
+        }
     }
     ctx.set_fonts(fonts);
 }
@@ -862,7 +1071,8 @@ fn render_technique_builder(ui: &mut Ui, id: &str, builder: &mut TechniqueBuilde
                     ui.label(control_label("RAILS"));
                     ui.add(egui::DragValue::new(&mut builder.draft_rails).range(2..=12));
                 }
-                    DraftTechniqueKind::Morse | DraftTechniqueKind::Reverse => {}
+                    DraftTechniqueKind::Morse | DraftTechniqueKind::Reverse
+                    | DraftTechniqueKind::Sha256 | DraftTechniqueKind::Sha512 => {}
                 }
 
                 if ui.add(accent_button("Add layer")).clicked() {
@@ -1053,4 +1263,15 @@ fn primary_text() -> Color32 {
 
 fn secondary_text() -> Color32 {
     Color32::from_rgb(226, 214, 205)
+}
+
+/// Linearly interpolate between two `Color32` values.  `t = 0.0` returns `a`; `t = 1.0` returns `b`.
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    Color32::from_rgba_premultiplied(
+        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
+        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
+        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
+        (a.a() as f32 + (b.a() as f32 - a.a() as f32) * t) as u8,
+    )
 }

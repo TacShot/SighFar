@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::models::{OperationKind, TechniqueDescriptor};
 
@@ -30,6 +31,34 @@ impl CipherPipeline {
             TechniqueDescriptor::Vigenere { keyword } => process_vigenere(input, keyword, direction),
             TechniqueDescriptor::RailFence { rails } => process_rail_fence(input, *rails, direction),
             TechniqueDescriptor::Reverse => Ok(input.chars().rev().collect()),
+            TechniqueDescriptor::Sha256 => process_sha256(input, direction),
+            TechniqueDescriptor::Sha512 => process_sha512(input, direction),
+        }
+    }
+}
+
+fn process_sha256(input: &str, direction: OperationKind) -> Result<String> {
+    match direction {
+        OperationKind::Encode => {
+            let mut hasher = Sha256::new();
+            hasher.update(input.as_bytes());
+            Ok(hex::encode(hasher.finalize()))
+        }
+        OperationKind::Decode => {
+            bail!("SHA-256 is a one-way hash function and cannot be decoded.")
+        }
+    }
+}
+
+fn process_sha512(input: &str, direction: OperationKind) -> Result<String> {
+    match direction {
+        OperationKind::Encode => {
+            let mut hasher = Sha512::new();
+            hasher.update(input.as_bytes());
+            Ok(hex::encode(hasher.finalize()))
+        }
+        OperationKind::Decode => {
+            bail!("SHA-512 is a one-way hash function and cannot be decoded.")
         }
     }
 }
