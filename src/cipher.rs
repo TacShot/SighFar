@@ -248,4 +248,180 @@ mod tests {
         assert_eq!(encoded, "... --- ... / ..---");
         assert_eq!(decoded, "sos 2");
     }
+
+    #[test]
+    fn caesar_encode_preserves_case_and_non_alpha() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Caesar { shift: 3 }];
+        let encoded = pipeline.encode("Hello, World!", techniques).unwrap();
+        assert_eq!(encoded, "Khoor, Zruog!");
+    }
+
+    #[test]
+    fn caesar_decode_reverses_encode() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Caesar { shift: 13 }];
+        let encoded = pipeline.encode("The quick brown fox", techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, "The quick brown fox");
+    }
+
+    #[test]
+    fn caesar_wrap_around() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Caesar { shift: 3 }];
+        let encoded = pipeline.encode("xyz XYZ", techniques).unwrap();
+        assert_eq!(encoded, "abc ABC");
+    }
+
+    #[test]
+    fn caesar_shift_zero_is_identity() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Caesar { shift: 0 }];
+        let text = "No Change Here 123!";
+        let encoded = pipeline.encode(text, techniques).unwrap();
+        assert_eq!(encoded, text);
+    }
+
+    #[test]
+    fn caesar_shift_26_is_identity() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Caesar { shift: 26 }];
+        let text = "Full Cycle";
+        let encoded = pipeline.encode(text, techniques).unwrap();
+        assert_eq!(encoded, text);
+    }
+
+    #[test]
+    fn vigenere_encode_and_decode() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Vigenere {
+            keyword: "key".to_string(),
+        }];
+        let encoded = pipeline.encode("Attack at dawn", techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, "Attack at dawn");
+    }
+
+    #[test]
+    fn vigenere_non_alpha_passthrough() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Vigenere {
+            keyword: "abc".to_string(),
+        }];
+        let encoded = pipeline.encode("Hello, 42!", techniques).unwrap();
+        assert!(encoded.contains(", "));
+        assert!(encoded.contains("42!"));
+    }
+
+    #[test]
+    fn vigenere_empty_keyword_fails() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Vigenere {
+            keyword: "123".to_string(),
+        }];
+        let result = pipeline.encode("test", techniques);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("keyword"));
+    }
+
+    #[test]
+    fn rail_fence_encode_and_decode() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::RailFence { rails: 3 }];
+        let encoded = pipeline.encode("WEAREDISCOVEREDRUNATONCE", techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, "WEAREDISCOVEREDRUNATONCE");
+    }
+
+    #[test]
+    fn rail_fence_two_rails() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::RailFence { rails: 2 }];
+        let text = "abcdef";
+        let encoded = pipeline.encode(text, techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn rail_fence_single_rail_fails() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::RailFence { rails: 1 }];
+        let result = pipeline.encode("test", techniques);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("2 rails"));
+    }
+
+    #[test]
+    fn rail_fence_single_char_passthrough() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::RailFence { rails: 3 }];
+        let encoded = pipeline.encode("X", techniques).unwrap();
+        assert_eq!(encoded, "X");
+        let decoded = pipeline.decode("X", techniques).unwrap();
+        assert_eq!(decoded, "X");
+    }
+
+    #[test]
+    fn reverse_is_own_inverse() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Reverse];
+        let text = "Hello World";
+        let encoded = pipeline.encode(text, techniques).unwrap();
+        assert_eq!(encoded, "dlroW olleH");
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn reverse_unicode() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Reverse];
+        let encoded = pipeline.encode("abc", techniques).unwrap();
+        assert_eq!(encoded, "cba");
+    }
+
+    #[test]
+    fn morse_unsupported_char_encode_fails() {
+        let pipeline = CipherPipeline;
+        let result = pipeline.encode("hello@world", &[TechniqueDescriptor::Morse]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported Morse character"));
+    }
+
+    #[test]
+    fn morse_unsupported_token_decode_fails() {
+        let pipeline = CipherPipeline;
+        let result = pipeline.decode("... BADTOKEN ---", &[TechniqueDescriptor::Morse]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported Morse token"));
+    }
+
+    #[test]
+    fn pipeline_with_empty_techniques_is_identity() {
+        let pipeline = CipherPipeline;
+        let text = "unchanged";
+        let encoded = pipeline.encode(text, &[]).unwrap();
+        assert_eq!(encoded, text);
+        let decoded = pipeline.decode(text, &[]).unwrap();
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn morse_all_digits_round_trip() {
+        let pipeline = CipherPipeline;
+        let techniques = &[TechniqueDescriptor::Morse];
+        let text = "0123456789";
+        let encoded = pipeline.encode(text, techniques).unwrap();
+        let decoded = pipeline.decode(&encoded, techniques).unwrap();
+        assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn morse_space_encodes_to_slash() {
+        let pipeline = CipherPipeline;
+        let encoded = pipeline.encode(" ", &[TechniqueDescriptor::Morse]).unwrap();
+        assert_eq!(encoded, "/");
+    }
 }

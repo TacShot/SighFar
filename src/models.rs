@@ -56,3 +56,50 @@ impl TechniqueDescriptor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TechniqueDescriptor;
+
+    #[test]
+    fn title_morse() {
+        assert_eq!(TechniqueDescriptor::Morse.title(), "Morse");
+    }
+
+    #[test]
+    fn title_caesar() {
+        assert_eq!(TechniqueDescriptor::Caesar { shift: 3 }.title(), "Caesar(3)");
+    }
+
+    #[test]
+    fn title_caesar_negative_shift() {
+        assert_eq!(
+            TechniqueDescriptor::Caesar { shift: -5 }.title(),
+            "Caesar(-5)"
+        );
+    }
+
+    #[test]
+    fn title_vigenere() {
+        assert_eq!(
+            TechniqueDescriptor::Vigenere {
+                keyword: "hello".to_string()
+            }
+            .title(),
+            "Vigenere(hello)"
+        );
+    }
+
+    #[test]
+    fn title_railfence() {
+        assert_eq!(
+            TechniqueDescriptor::RailFence { rails: 5 }.title(),
+            "RailFence(5)"
+        );
+    }
+
+    #[test]
+    fn title_reverse() {
+        assert_eq!(TechniqueDescriptor::Reverse.title(), "Reverse");
+    }
+}

@@ -94,17 +94,98 @@ mod tests {
     use super::SecureEnvelope;
     use crate::models::SecureKeyPair;
 
+    fn test_pair() -> SecureKeyPair {
+        SecureKeyPair {
+            passphrase: "alpha".to_string(),
+            companion_code: "BRAVO987".to_string(),
+        }
+    }
+
     #[test]
     fn secure_envelope_round_trip() {
         let envelope = SecureEnvelope;
-        let pair = SecureKeyPair {
-            passphrase: "alpha".to_string(),
-            companion_code: "BRAVO987".to_string(),
-        };
+        let pair = test_pair();
 
         let payload = envelope.seal("cipher-stack-output", &pair).unwrap();
         let opened = envelope.open(&payload, &pair).unwrap();
 
         assert_eq!(opened, "cipher-stack-output");
+    }
+
+    #[test]
+    fn seal_open_wrong_passphrase_fails() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        let payload = envelope.seal("secret message", &pair).unwrap();
+
+        let wrong_pair = SecureKeyPair {
+            passphrase: "wrong".to_string(),
+            companion_code: pair.companion_code.clone(),
+        };
+        let result = envelope.open(&payload, &wrong_pair);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn seal_open_wrong_companion_code_fails() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        let payload = envelope.seal("secret message", &pair).unwrap();
+
+        let wrong_pair = SecureKeyPair {
+            passphrase: pair.passphrase.clone(),
+            companion_code: "ZZZZZZZZZ".to_string(),
+        };
+        let result = envelope.open(&payload, &wrong_pair);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_malformed_base64_fails() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        let result = envelope.open("not-valid-base64!!!!", &pair);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("base64"));
+    }
+
+    #[test]
+    fn open_too_short_payload_fails() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        // Encode less than 12 bytes as base64
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        let short = BASE64.encode(b"short");
+        let result = envelope.open(&short, &pair);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("malformed"));
+    }
+
+    #[test]
+    fn make_key_pair_stores_passphrase_and_generates_code() {
+        let envelope = SecureEnvelope;
+        let pair = envelope.make_key_pair("my-pass");
+        assert_eq!(pair.passphrase, "my-pass");
+        assert_eq!(pair.companion_code.len(), 18);
+        assert!(pair.companion_code.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn seal_produces_different_ciphertext_each_call() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        let payload1 = envelope.seal("same message", &pair).unwrap();
+        let payload2 = envelope.seal("same message", &pair).unwrap();
+        // Different random nonces each time
+        assert_ne!(payload1, payload2);
+    }
+
+    #[test]
+    fn seal_open_empty_message() {
+        let envelope = SecureEnvelope;
+        let pair = test_pair();
+        let payload = envelope.seal("", &pair).unwrap();
+        let opened = envelope.open(&payload, &pair).unwrap();
+        assert_eq!(opened, "");
     }
 }

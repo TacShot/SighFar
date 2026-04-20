@@ -30,6 +30,13 @@ impl Default for HistoryStore {
 }
 
 impl HistoryStore {
+    pub fn with_root(root: PathBuf) -> Self {
+        Self {
+            key_file: root.join("history.key"),
+            history_file: root.join("history.enc"),
+            root,
+        }
+    }
     pub fn append(&self, entry: HistoryEntry) -> Result<()> {
         let mut items = self.load()?;
         items.insert(0, entry);
@@ -142,28 +149,32 @@ mod tests {
     use super::HistoryStore;
     use crate::models::{HistoryEntry, OperationKind, TechniqueDescriptor};
 
-    #[test]
-    fn history_store_persists_entries() {
+    fn unique_store(label: &str) -> HistoryStore {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("sighfar-test-{unique}"));
-        let store = HistoryStore {
-            key_file: root.join("history.key"),
-            history_file: root.join("history.enc"),
-            root,
-        };
+        let root = std::env::temp_dir().join(format!("sighfar-test-{label}-{unique}"));
+        HistoryStore::with_root(root)
+    }
 
-        let entry = HistoryEntry {
-            id: "entry-1".to_string(),
+    fn make_entry(id: &str, preview: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_string(),
             timestamp: Utc.timestamp_opt(12_345, 0).unwrap(),
             operation: OperationKind::Encode,
-            input_preview: "hello".to_string(),
-            output_preview: "uryyb".to_string(),
+            input_preview: preview.to_string(),
+            output_preview: "out".to_string(),
             techniques: vec![TechniqueDescriptor::Caesar { shift: 13 }],
             used_secure_envelope: false,
-        };
+        }
+    }
+
+    #[test]
+    fn history_store_persists_entries() {
+        let store = unique_store("basic");
+
+        let entry = make_entry("entry-1", "hello");
 
         store.append(entry).unwrap();
         let items = store.load().unwrap();
@@ -174,5 +185,85 @@ mod tests {
             items[0].techniques.as_slice(),
             [TechniqueDescriptor::Caesar { shift: 13 }]
         ));
+    }
+
+    #[test]
+    fn load_returns_empty_when_no_file() {
+        let store = unique_store("empty");
+        let items = store.load().unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn append_prepends_newest_first() {
+        let store = unique_store("prepend");
+
+        store.append(make_entry("first", "first message")).unwrap();
+        store.append(make_entry("second", "second message")).unwrap();
+        store.append(make_entry("third", "third message")).unwrap();
+
+        let items = store.load().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].input_preview, "third message");
+        assert_eq!(items[1].input_preview, "second message");
+        assert_eq!(items[2].input_preview, "first message");
+    }
+
+    #[test]
+    fn export_and_import_blob_round_trip() {
+        // Export from store_a, then import into another store that shares
+        // the same encryption key (same-device restore scenario).
+        let store_a = unique_store("export");
+        store_a.append(make_entry("entry-x", "exported data")).unwrap();
+
+        let blob = store_a.export_encrypted_blob().unwrap();
+        assert!(!blob.is_empty());
+
+        // store_b shares the key file from store_a so it can decrypt the blob.
+        let store_b = HistoryStore {
+            key_file: store_a.key_file.clone(),
+            history_file: store_a.root.join("restored.enc"),
+            root: store_a.root.clone(),
+        };
+        store_b.import_encrypted_blob(&blob).unwrap();
+
+        let items = store_b.load().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].input_preview, "exported data");
+    }
+
+    #[test]
+    fn export_returns_empty_when_no_history() {
+        let store = unique_store("noexport");
+        let blob = store.export_encrypted_blob().unwrap();
+        assert!(blob.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_contains_paths() {
+        let store = unique_store("diag");
+        let diag = store.diagnostics();
+        assert!(diag.contains("storage:"));
+        assert!(diag.contains("key:"));
+        assert!(diag.contains("history:"));
+    }
+
+    #[test]
+    fn history_persists_decode_operation() {
+        let store = unique_store("decode-op");
+        let entry = HistoryEntry {
+            id: "decode-entry".to_string(),
+            timestamp: Utc.timestamp_opt(99_999, 0).unwrap(),
+            operation: OperationKind::Decode,
+            input_preview: "cipher".to_string(),
+            output_preview: "plain".to_string(),
+            techniques: vec![TechniqueDescriptor::Reverse],
+            used_secure_envelope: true,
+        };
+        store.append(entry).unwrap();
+        let items = store.load().unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0].operation, OperationKind::Decode));
+        assert!(items[0].used_secure_envelope);
     }
 }
