@@ -25,7 +25,6 @@ impl SighFarApp {
                 "2" => self.run_decode_flow()?,
                 "3" => self.show_history()?,
                 "4" => self.show_settings()?,
-                "5" => self.show_roadmap()?,
                 "0" | "q" | "quit" => break,
                 other => {
                     self.ui.print_panel("Input", &format!("Unknown option: {other}"));
@@ -41,7 +40,7 @@ impl SighFarApp {
         self.ui.clear_screen();
         self.ui.print_panel(
             "Encode",
-            "Stack one or more techniques in order.\nAvailable: morse, caesar, vigenere, railfence, reverse\nExample: morse,caesar:4,reverse",
+            "Stack one or more techniques in order.\nAvailable: morse, caesar, vigenere, railfence, reverse, sha256, sha512\nExample: caesar:4,reverse,sha256",
         );
 
         let message = self.ui.prompt("Message:")?;
@@ -137,19 +136,9 @@ impl SighFarApp {
         self.ui.print_panel(
             "Settings",
             &format!(
-                "github oauth: planned\nupdate channel: planned\nfile hiding / carrier mode: planned\n\nlocal encrypted history:\n{}\n\nnote:\nthis rust branch is aimed at future cross-platform parity. the next production step is moving local secrets into os key stores per platform.",
+                "github oauth: configure via the GUI settings tab\nfile carrier mode: use the GUI carrier tab\n\nlocal encrypted history:\n{}",
                 self.core.diagnostics()
             ),
-        );
-        self.ui.pause()?;
-        Ok(())
-    }
-
-    fn show_roadmap(&self) -> Result<()> {
-        self.ui.clear_screen();
-        self.ui.print_panel(
-            "Roadmap",
-            "Phase 1\n- offline terminal workbench in Rust\n- stacked ciphers + secure paired-key envelope\n- encrypted local history\n\nPhase 2\n- SmileOS-like GUI skin with egui or Tauri shell\n- drag-and-drop file carrier workflows\n- export/import key bundles\n\nPhase 3\n- GitHub OAuth in settings\n- signed release packaging per platform\n- updater behavior for macOS, Linux, Windows, Android, and FreeBSD release channels",
         );
         self.ui.pause()?;
         Ok(())

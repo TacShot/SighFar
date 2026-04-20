@@ -6,6 +6,7 @@ mod core;
 mod gui;
 mod github_sync;
 mod history;
+mod keys;
 mod models;
 mod secure;
 mod ui;

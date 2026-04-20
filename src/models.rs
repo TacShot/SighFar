@@ -35,6 +35,20 @@ pub struct HistoryEntry {
     pub used_secure_envelope: bool,
 }
 
+/// A named RSA key pair stored in the encrypted key database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyEntry {
+    /// Human-readable label such as "primary" or "work".
+    pub label: String,
+    /// SHA-256 fingerprint of the public key DER (hex).
+    pub fingerprint: String,
+    /// Private key as PKCS#8 DER bytes encoded in base64.
+    pub private_key_b64: String,
+    /// Public key as PKCS#1 DER bytes encoded in base64.
+    pub public_key_b64: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TechniqueDescriptor {
@@ -43,6 +57,10 @@ pub enum TechniqueDescriptor {
     Vigenere { keyword: String },
     RailFence { rails: usize },
     Reverse,
+    /// Output the SHA-256 hex digest of the input.  One-way — cannot be decoded.
+    Sha256,
+    /// Output the SHA-512 hex digest of the input.  One-way — cannot be decoded.
+    Sha512,
 }
 
 impl TechniqueDescriptor {
@@ -53,6 +71,8 @@ impl TechniqueDescriptor {
             Self::Vigenere { keyword } => format!("Vigenere({keyword})"),
             Self::RailFence { rails } => format!("RailFence({rails})"),
             Self::Reverse => "Reverse".to_string(),
+            Self::Sha256 => "SHA-256".to_string(),
+            Self::Sha512 => "SHA-512".to_string(),
         }
     }
 }

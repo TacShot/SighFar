@@ -121,7 +121,9 @@ impl HistoryStore {
 }
 
 fn default_support_directory() -> PathBuf {
+    // $HOME on Unix, %USERPROFILE% on Windows, fall back to the current directory.
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(".").to_path_buf())
         .join(".sighfar")

@@ -6,15 +6,13 @@ impl TerminalUi {
     pub fn render_header(&self) {
         self.clear_screen();
         println!("\x1b[31m====================================================================\x1b[0m");
-        println!("\x1b[31;1m  SmileFar // offline cipher workbench (Rust pivot)\x1b[0m");
-        println!("\x1b[90m  retro shell prototype inspired by SmileOS aesthetics\x1b[0m");
+        println!("\x1b[31;1m  SighFar // offline cipher workbench\x1b[0m");
         println!("\x1b[31m====================================================================\x1b[0m");
         println!();
         println!("  [1] Encode message");
         println!("  [2] Decode message");
         println!("  [3] View encrypted history");
         println!("  [4] Settings");
-        println!("  [5] Roadmap");
         println!("  [0] Quit");
         println!();
     }
