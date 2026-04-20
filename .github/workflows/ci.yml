@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop", "copilot/**"]
+  pull_request:
+    branches: ["main", "develop"]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Swift build + test matrix (terminal layer — Phases 1-3)
+  # ─────────────────────────────────────────────────────────────────
+  swift:
+    name: Swift (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+        # windows-latest is excluded until swift-crypto Windows support is
+        # confirmed on the chosen GitHub-hosted runner image; re-enable by
+        # adding it to this list once tested.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift build artefacts
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: swift-${{ matrix.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swift-${{ matrix.os }}-
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Test
+        run: swift test
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: SighFar-terminal-${{ matrix.os }}
+          path: .build/release/SighFar
+          if-no-files-found: ignore

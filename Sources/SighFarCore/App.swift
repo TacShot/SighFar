@@ -1,12 +1,20 @@
 import Foundation
 
-struct SighFarApp {
+package struct SighFarApp {
+    /// Maximum message size (bytes) that is processed without warning.
+    /// Inputs beyond this threshold prompt the user to confirm before encoding/decoding
+    /// to prevent accidental large payloads from stalling the terminal.
+    static let messageSizeLimitBytes = 1_048_576 // 1 MB
+
     private let ui = TerminalUI()
     private let pipeline = CipherPipeline()
     private let secureEnvelope = SecureEnvelope()
     private let historyStore = HistoryStore()
+    private let parser = TechniqueParser()
 
-    mutating func run() {
+    package init() {}
+
+    package mutating func run() {
         var shouldContinue = true
         while shouldContinue {
             ui.renderHeader()
@@ -45,9 +53,12 @@ struct SighFarApp {
             )
 
             let message = ui.prompt("Message:")
+
+            guard confirmLargeInput(message) else { return }
+
             let techniqueInput = ui.prompt("Technique chain:")
             let useSecureEnvelope = ui.prompt("Wrap in secure paired-key envelope? (y/N):")
-            let techniques = try parseTechniques(from: techniqueInput)
+            let techniques = try parser.parse(from: techniqueInput)
             let transformed = try pipeline.encode(message, using: techniques)
 
             var keyPair: SecureKeyPair?
@@ -102,8 +113,10 @@ struct SighFarApp {
                 rawInput = ui.prompt("Cipher text:")
             }
 
+            guard confirmLargeInput(rawInput) else { return }
+
             let techniqueInput = ui.prompt("Technique chain:")
-            let techniques = try parseTechniques(from: techniqueInput)
+            let techniques = try parser.parse(from: techniqueInput)
             let decoded = try pipeline.decode(rawInput, using: techniques)
 
             let result = EncodedMessage(
@@ -127,11 +140,11 @@ struct SighFarApp {
     private func showHistory() {
         do {
             ui.clearScreen()
-            let entries = try historyStore.load()
+            let entries = try historyStore.loadRecent(limit: 12)
             if entries.isEmpty {
                 ui.printPanel(title: "History", body: "No entries yet. Encode or decode a message first.")
             } else {
-                let body = entries.prefix(12).enumerated().map { index, entry in
+                let body = entries.enumerated().map { index, entry in
                     let timestamp = ISO8601DateFormatter().string(from: entry.timestamp)
                     let techniques = entry.techniques.map(\.title).joined(separator: " -> ")
                     return """
@@ -218,45 +231,17 @@ struct SighFarApp {
         ui.pause()
     }
 
-    private func parseTechniques(from input: String) throws -> [TechniqueDescriptor] {
-        let components = input
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        guard !components.isEmpty else {
-            throw CipherError.invalidInput("You need at least one technique.")
-        }
-
-        return try components.map { component in
-            if component == "morse" {
-                return .morse
-            }
-            if component == "reverse" {
-                return .reverse
-            }
-            if component.hasPrefix("caesar:") {
-                guard let shift = Int(component.split(separator: ":").last ?? "") else {
-                    throw CipherError.invalidInput("Caesar format is caesar:3")
-                }
-                return .caesar(shift: shift)
-            }
-            if component.hasPrefix("vigenere:") {
-                let parts = component.split(separator: ":", maxSplits: 1).map(String.init)
-                guard parts.count == 2, !parts[1].isEmpty else {
-                    throw CipherError.invalidInput("Vigenere format is vigenere:keyword")
-                }
-                return .vigenere(keyword: parts[1])
-            }
-            if component.hasPrefix("railfence:") {
-                guard let rails = Int(component.split(separator: ":").last ?? "") else {
-                    throw CipherError.invalidInput("RailFence format is railfence:3")
-                }
-                return .railFence(rails: rails)
-            }
-
-            throw CipherError.invalidInput("Unknown technique: \(component)")
-        }
+    /// Returns `false` (and prints a warning) if `input` exceeds the size limit
+    /// and the user declines to proceed.  Returns `true` when the input is within
+    /// limits or the user explicitly confirms they want to continue.
+    private func confirmLargeInput(_ input: String) -> Bool {
+        let bytes = input.utf8.count
+        guard bytes > Self.messageSizeLimitBytes else { return true }
+        let kb = bytes / 1024
+        let answer = ui.prompt(
+            "Warning: input is \(kb) KB (limit \(Self.messageSizeLimitBytes / 1024) KB). Proceed? (y/N):"
+        )
+        return answer.lowercased().hasPrefix("y")
     }
 
     private func historyEntry(for result: EncodedMessage, operation: OperationKind) -> HistoryEntry {

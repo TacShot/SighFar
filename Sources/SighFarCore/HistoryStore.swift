@@ -1,7 +1,12 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 struct HistoryStore {
+    /// Maximum number of history entries kept on disk.  Oldest entries are
+    /// dropped when this limit is exceeded, keeping storage and decrypt/re-encrypt
+    /// time bounded.
+    static let maxEntries = 500
+
     private let fileManager = FileManager.default
     private let supportDirectory: URL
     private let keyFile: URL
@@ -10,7 +15,7 @@ struct HistoryStore {
     private let decoder = JSONDecoder()
 
     init(baseDirectory: URL? = nil) {
-        let root = baseDirectory ?? Self.defaultSupportDirectory()
+        let root = baseDirectory ?? PlatformPaths().sighfarDirectory
         self.supportDirectory = root
         self.keyFile = root.appendingPathComponent("history.key")
         self.historyFile = root.appendingPathComponent("history.enc")
@@ -22,6 +27,10 @@ struct HistoryStore {
     func append(_ entry: HistoryEntry) throws {
         var items = try load()
         items.insert(entry, at: 0)
+        // Enforce the entry cap — drop the oldest entries beyond the limit.
+        if items.count > Self.maxEntries {
+            items = Array(items.prefix(Self.maxEntries))
+        }
         try save(items)
     }
 
@@ -42,11 +51,19 @@ struct HistoryStore {
         return try decoder.decode([HistoryEntry].self, from: plaintext)
     }
 
+    /// Returns up to `limit` of the most recent entries without decoding
+    /// the full collection beyond what is needed.
+    func loadRecent(limit: Int) throws -> [HistoryEntry] {
+        let all = try load()
+        return Array(all.prefix(limit))
+    }
+
     func diagnostics() -> String {
         """
         storage: \(supportDirectory.path)
         key: \(keyFile.lastPathComponent)
         history: \(historyFile.lastPathComponent)
+        max entries: \(Self.maxEntries)
         """
     }
 
@@ -80,11 +97,5 @@ struct HistoryStore {
             at: supportDirectory,
             withIntermediateDirectories: true
         )
-    }
-
-    private static func defaultSupportDirectory() -> URL {
-        let fileManager = FileManager.default
-        let home = fileManager.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".sighfar", isDirectory: true)
     }
 }

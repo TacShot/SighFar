@@ -2,13 +2,14 @@ import Foundation
 
 struct TerminalUI {
     private let line = String(repeating: "=", count: 68)
+    private let caps = TerminalCapabilities()
 
     func renderHeader() {
         clearScreen()
-        print("\u{001B}[31m\(line)\u{001B}[0m")
-        print("\u{001B}[31;1m  SmileFar // offline cipher workbench\u{001B}[0m")
-        print("\u{001B}[90m  retro shell prototype inspired by SmileOS aesthetics\u{001B}[0m")
-        print("\u{001B}[31m\(line)\u{001B}[0m")
+        print(caps.styled(line, code: "31"))
+        print(caps.styled("  SmileFar // offline cipher workbench", code: "31;1"))
+        print(caps.styled("  retro shell prototype inspired by SmileOS aesthetics", code: "90"))
+        print(caps.styled(line, code: "31"))
         print("")
         print("  [1] Encode message")
         print("  [2] Decode message")
@@ -20,14 +21,16 @@ struct TerminalUI {
     }
 
     func printPanel(title: String, body: String) {
-        print("\u{001B}[31;1m[ \(title) ]\u{001B}[0m")
+        print(caps.styled("[ \(title) ]", code: "31;1"))
         print(body)
         print("")
     }
 
     func prompt(_ text: String) -> String {
+        // The C standard guarantees stdout is flushed before stdin is read on
+        // interactive terminals, so an explicit fflush is not required and
+        // avoids Swift 6 strict-concurrency issues with the C global `stdout`.
         print(text, terminator: " ")
-        fflush(stdout)
         return readLine() ?? ""
     }
 
@@ -36,6 +39,10 @@ struct TerminalUI {
     }
 
     func clearScreen() {
-        print("\u{001B}[2J\u{001B}[H", terminator: "")
+        let seq = caps.clearSequence
+        if !seq.isEmpty {
+            print(seq, terminator: "")
+        }
     }
 }
+
